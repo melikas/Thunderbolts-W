@@ -3,14 +3,14 @@ import os
 import numpy as np
 
 # ============================================================================
-# COMPREHENSIVE BLE DATA MERGING AND TRANSFORMATION SCRIPT
+# COMPREHENSIVE BLE DATA MERGING 
 # ============================================================================
 # This script performs the following operations:
 # 1. Merges all individual BLE CSV files
 # 2. Transforms data structure and adds date/time columns
-# 3. Pivots data to create RSSI columns for each beacon
-# 4. Converts RSSI values to binary (0/1)
-# 5. Removes timezone information from timestamps
+# 3. Adds RSSI_1..RSSI_25 binary columns per row (no pivot)
+# 4. Preserves fractional seconds and ordering; no row drops
+# 5. Optionally removes timezone indicator without altering milliseconds
 # ============================================================================
 
 def setup_beacon_dictionary():
@@ -53,60 +53,57 @@ def merge_individual_csv_files(dataset_directory):
     print("STEP 1: MERGING INDIVIDUAL CSV FILES")
     print("=" * 80)
     
-    # Check if BLEdata2.csv already exists
-    existing_merged = os.path.join(dataset_directory, "BLEdata2.csv")
-    if os.path.exists(existing_merged):
-        print(f"Found existing merged file: {existing_merged}")
-        df = pd.read_csv(existing_merged, dtype={'column3': str}, low_memory=False)
-        print(f"Loaded {len(df)} rows from existing file\n")
+    # Always merge from source CSVs to avoid any prior transformations
+    all_files = os.listdir(dataset_directory)
+    # Only include raw files that start with the expected prefix
+    csv_files = [file for file in all_files if file.endswith('.csv') and file.startswith('user-ble-id_')]
+    
+    print(f"Found {len(csv_files)} CSV files to merge")
+    
+    all_dfs = []
+    for csv_file in csv_files:
+        file_path = os.path.join(dataset_directory, csv_file)
+        try:
+            df_temp = pd.read_csv(file_path, header=None, dtype={0: 'int64', 1: 'string', 2: 'string', 3: 'string', 4: 'float64', 5: 'string'})
+            df_temp.columns = ['pid', 'timestamp', 'column3', 'mac_address', 'rssi', 'column6']
+            all_dfs.append(df_temp)
+        except Exception as e:
+            print(f"Error reading {csv_file}: {e}")
+    
+    if all_dfs:
+        df = pd.concat(all_dfs, ignore_index=True)
+        print(f"Successfully merged {len(all_dfs)} files")
+        print(f"Total rows: {len(df)}\n")
     else:
-        # List all CSV files
-        all_files = os.listdir(dataset_directory)
-        csv_files = [file for file in all_files if file.endswith('.csv') and 
-                     file not in ["BLEdata.csv", "BLEdata2.csv", "BLEdata3.csv"]]
-        
-        print(f"Found {len(csv_files)} CSV files to merge")
-        
-        all_dfs = []
-        for csv_file in csv_files:
-            file_path = os.path.join(dataset_directory, csv_file)
-            try:
-                df_temp = pd.read_csv(file_path, header=None)
-                df_temp.columns = ['pid', 'timestamp', 'column3', 'mac_address', 'rssi', 'column6']
-                all_dfs.append(df_temp)
-            except Exception as e:
-                print(f"Error reading {csv_file}: {e}")
-        
-        if all_dfs:
-            df = pd.concat(all_dfs, ignore_index=True)
-            print(f"Successfully merged {len(all_dfs)} files")
-            print(f"Total rows: {len(df)}\n")
-        else:
-            print("No CSV files found to merge!")
-            return None
+        print("No CSV files found to merge!")
+        return None
     
     return df
 
 
-def transform_and_pivot_data(df, mac_to_rssi_column):
+def transform_and_flag_data(df, mac_to_rssi_column):
     """
-    STEP 2: Transform data structure and pivot to create RSSI columns
+    STEP 2: Transform data structure and add per-row RSSI flags without pivoting
+    Preserves every input row and fractional seconds, keeps ordering.
     """
     print("=" * 80)
-    print("STEP 2: TRANSFORMING AND PIVOTING DATA")
+    print("STEP 2: TRANSFORMING DATA (NO PIVOT)")
     print("=" * 80)
     
-    # Convert timestamp to datetime
+    # Convert timestamp to datetime preserving fractional seconds and mixed formats
     print("Converting timestamps...")
-    df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed')
+    dt = pd.to_datetime(df['timestamp'], format='mixed', errors='coerce')
+    # If timestamps are timezone-aware, strip tz without changing the time
+    try:
+        dt = dt.dt.tz_localize(None)
+    except Exception:
+        pass
+    df['timestamp'] = dt
     
     # Extract date and time columns
     print("Extracting date and time information...")
     df['year_month_day'] = df['timestamp'].dt.strftime('%Y-%m-%d')
     df['hour'] = df['timestamp'].dt.hour
-    
-    # Remove timezone from timestamp
-    df['timestamp'] = df['timestamp'].dt.tz_localize(None)
     
     # Rename columns
     df = df.rename(columns={
@@ -115,64 +112,38 @@ def transform_and_pivot_data(df, mac_to_rssi_column):
         'column6': 'power'
     })
     
-    # Create mapping for RSSI columns
-    df['rssi_column'] = df['mac_address'].map(mac_to_rssi_column)
-    
-    # Pivot data to create separate RSSI columns for each beacon
-    print("Pivoting data to create RSSI columns...")
-    df_pivot = df.pivot_table(
-        index=['user_id', 'timestamp', 'year_month_day', 'hour'],
-        columns='rssi_column',
-        values='RSSI',
-        aggfunc='mean'
-    ).reset_index()
-    
-    # Ensure all RSSI columns exist
-    for i in range(1, 26):
-        col_name = f'RSSI_{i}'
-        if col_name not in df_pivot.columns:
-            df_pivot[col_name] = np.nan
-    
-    # Get first mac_address and power for each row
-    first_values = df.groupby(['user_id', 'timestamp']).agg({
-        'mac_address': 'first',
-        'power': 'first'
-    }).reset_index()
-    
-    # Merge back to get mac_address and power
-    df_result = df_pivot.merge(first_values, on=['user_id', 'timestamp'], how='left')
-    
-    # Calculate mean RSSI from all RSSI columns
+    # Build RSSI_1..RSSI_25 binary flags per row (1 if this row belongs to that beacon)
+    print("Building RSSI_1..RSSI_25 binary columns per row...")
     rssi_cols = [f'RSSI_{i}' for i in range(1, 26)]
-    df_result['RSSI'] = df_result[rssi_cols].mean(axis=1, skipna=True)
+    for col in rssi_cols:
+        df[col] = 0
+    # Map each mac to its target RSSI_* column
+    df['rssi_target_col'] = df['mac_address'].map(mac_to_rssi_column)
+    # Set flag 1 for the corresponding column for each row
+    for col in rssi_cols:
+        df.loc[df['rssi_target_col'] == col, col] = 1
+    df.drop(columns=['rssi_target_col'], inplace=True)
     
-    # Reorder columns
-    columns_order = ['user_id', 'timestamp', 'mac_address', 'RSSI', 'power', 
-                     'year_month_day', 'hour'] + rssi_cols
-    df_result = df_result[columns_order]
+    # Sort to ensure stable ordering: by user_id then timestamp, preserving duplicates
+    print("Sorting data by user_id and timestamp while preserving all rows...")
+    df = df.sort_values(by=['user_id', 'timestamp'], kind='mergesort').reset_index(drop=True)
     
-    print(f"Data pivoted successfully")
-    print(f"Total rows after pivoting: {len(df_result)}\n")
+    # Final column order
+    columns_order = ['user_id', 'timestamp', 'mac_address', 'RSSI', 'power', 'year_month_day', 'hour'] + rssi_cols
+    df = df[columns_order]
     
-    return df_result
+    print(f"Data transformed successfully (no pivot). Total rows: {len(df)}\n")
+    return df
 
 
 def convert_rssi_to_binary(df):
     """
-    STEP 3: Convert RSSI values to binary (1 if has value, 0 if NaN)
+    STEP 3: (No-op) RSSI_1..RSSI_25 are already binary flags per row.
+    Keeping this for pipeline compatibility.
     """
     print("=" * 80)
-    print("STEP 3: CONVERTING RSSI VALUES TO BINARY")
+    print("STEP 3: RSSI FLAGS ALREADY BINARY – SKIPPING")
     print("=" * 80)
-    
-    rssi_columns = [f'RSSI_{i}' for i in range(1, 26)]
-    
-    print("Converting RSSI columns to binary values (1 = has value, 0 = no value)...")
-    for col in rssi_columns:
-        df[col] = df[col].notna().astype(int)
-    
-    print("RSSI columns converted to binary successfully\n")
-    
     return df
 
 
@@ -232,8 +203,8 @@ def main():
         print("Error: Could not load data")
         return
     
-    # Step 2: Transform and pivot data
-    df = transform_and_pivot_data(df, mac_to_rssi_column)
+    # Step 2: Transform without pivot; keep all rows
+    df = transform_and_flag_data(df, mac_to_rssi_column)
     
     # Step 3: Convert RSSI to binary
     df = convert_rssi_to_binary(df)
