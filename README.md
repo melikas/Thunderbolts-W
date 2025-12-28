@@ -31,7 +31,7 @@ The dataset is cleaned to improve reliability and robustness:
 For each data point (row), the distance \( d \) to each BLE beacon is estimated using RSSI and transmission power, based on standard RSSI-based distance estimation models.
 
 Example formula:  d = 10 ^ ((TxPower - RSSI) / (10 * n))
-where `n` is the path-loss exponent.
+where `n` is the path-loss exponent. ~ 3, 3.5
 
 ---
 
