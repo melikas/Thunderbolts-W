@@ -191,8 +191,8 @@ def main():
     print("\n")
     
     # Configuration
-    dataset_directory = r"c:\Users\umroot\Desktop\BLE Data"
-    output_file = r"c:\Users\umroot\Desktop\BLE Data\BLEdata.csv"
+    dataset_directory = r"C:\Users\laber\MASc\Thunderbolts-W\data\ABC2026 Sozolab Challenge\Dataset\BLE Data"
+    output_file = r"C:\Users\laber\MASc\Thunderbolts-W\data\merged_ble_data.csv"
     
     # Get beacon dictionary
     mac_to_rssi_column = setup_beacon_dictionary()
