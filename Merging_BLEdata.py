@@ -192,7 +192,7 @@ def main():
     
     # Configuration
     dataset_directory = r"c:\Users\umroot\Desktop\BLE Data"
-    output_file = r"c:\Users\umroot\Desktop\BLE Data\BLEdata3.csv"
+    output_file = r"c:\Users\umroot\Desktop\BLE Data\BLEdata.csv"
     
     # Get beacon dictionary
     mac_to_rssi_column = setup_beacon_dictionary()
