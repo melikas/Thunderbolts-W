@@ -9,7 +9,7 @@ from datetime import datetime
 import os
 
 # Configuration
-DATA_DIR = r"c:\Users\umroot\Desktop\BLE Data"
+DATA_DIR = r"C:\Users\laber\MASc\Thunderbolts-W\data"
 BLE_DATA_FILE = os.path.join(DATA_DIR, "ble_data_labeled.csv")
 OUTPUT_FILE = os.path.join(DATA_DIR, "ble_data_FE_labeled.csv")
 
